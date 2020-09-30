@@ -466,7 +466,8 @@ psInitialize(void)
 	vm_statistics_data_t vm_stat;
 	mach_msg_type_number_t count = HOST_VM_INFO_COUNT;
 	host_statistics(mach_host_self(), HOST_VM_INFO, (host_info_t)&vm_stat, &count);
-	debug("Physical memory size %llu\n", (uint64_t)(vm_stat.free_count * page_size));
+	_dwMemAvailPhys = (uint64_t)(vm_stat.free_count * page_size);
+	debug("Physical memory size %llu\n", _dwMemAvailPhys);
 	debug("Available physical memory %llu\n", size);
 #endif
 	_dwOperatingSystemVersion = OS_WINXP; // To fool other classes
