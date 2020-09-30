@@ -87,7 +87,8 @@ workspace "re3"
 
 	filter { "system:macosx" }
 		platforms {
-			"macosx-amd64-librw_gl3_glfw-oal"
+			"macosx-amd64-librw_gl3_glfw-oal",
+			"macosx-arm64-librw_gl3_glfw-oal",
 		}
 
 	filter "configurations:Debug"
@@ -117,6 +118,12 @@ workspace "re3"
 
 	filter { "platforms:*arm*" }
 		architecture "ARM"
+
+	filter { "platforms:macosx-arm64-*" }
+		buildoptions { "-target", "arm64-apple-macos11" }
+
+	filter { "platforms:macosx-amd64-*" }
+		buildoptions { "-target", "x86_64-apple-macos10.12" }
 
 	filter { "platforms:*librw_d3d9*" }
 		defines { "RW_D3D9" }
