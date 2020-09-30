@@ -4,6 +4,9 @@
 #include <pthread.h>
 #include <signal.h>
 #include <semaphore.h>
+#ifdef __APPLE__
+#include <stdlib.h>
+#endif
 #include <sys/types.h>
 #include <unistd.h>
 #include <sys/time.h>
@@ -36,9 +39,17 @@ struct CdReadInfo
 #ifdef ONE_THREAD_PER_CHANNEL
 	int8 nThreadStatus; // 0: created 1:initalized 2:abort now
     pthread_t pChannelThread;
+	#ifdef __APPLE__
+	sem_t *pStartSemaphore;
+	#else
     sem_t pStartSemaphore;
+	#endif	
 #endif
-	sem_t pDoneSemaphore; // used for CdStreamSync
+	#ifdef __APPLE__
+	sem_t *pDoneSemaphore; // used for CdStreamSync
+	#else
+    sem_t pDoneSemaphore; // used for CdStreamSync
+	#endif
 	int32 hFile;
 };
 
@@ -51,7 +62,11 @@ char *gImgNames[MAX_CDIMAGES];
 
 #ifndef ONE_THREAD_PER_CHANNEL
 pthread_t _gCdStreamThread;
+#ifdef __APPLE__
+sem_t *gCdStreamSema; // released when we have new thing to read(so channel is set)
+#else
 sem_t gCdStreamSema; // released when we have new thing to read(so channel is set)
+#endif	
 int8 gCdStreamThreadStatus; // 0: created 1:initalized 2:abort now
 Queue gChannelRequestQ;
 bool _gbCdStreamOverlapped;
@@ -76,7 +91,11 @@ CdStreamInitThread(void)
 	gChannelRequestQ.tail = 0;
 	gChannelRequestQ.size = gNumChannels + 1;
 	ASSERT(gChannelRequestQ.items != nil );
+	#ifdef __APPLE__
+	gCdStreamSema = sem_open("/semaphore", O_CREAT, 0644, 1);
+	#else
     status = sem_init(&gCdStreamSema, 0, 0);
+	#endif	
 #endif
 
 
@@ -91,8 +110,12 @@ CdStreamInitThread(void)
 	{
 		for ( int32 i = 0; i < gNumChannels; i++ )
 		{
-		    status = sem_init(&gpReadInfo[i].pDoneSemaphore, 0, 0);
-
+			#ifdef __APPLE__
+			gpReadInfo[i].pDoneSemaphore = sem_open("/semaphoredone", O_CREAT, 0644, 1);
+			#else
+    		status = sem_init(&gpReadInfo[i].pDoneSemaphore, 0, 0);
+			#endif
+			
 			if (status == -1)
 			{
 				CDTRACE("failed to create sync semaphore");
@@ -100,7 +123,11 @@ CdStreamInitThread(void)
 				return;
 			}
 #ifdef ONE_THREAD_PER_CHANNEL
-		    status = sem_init(&gpReadInfo[i].pStartSemaphore, 0, 0);
+			#ifdef __APPLE__
+			gpReadInfo[i].pStartSemaphore = sem_open("/semaphorestart", O_CREAT, 0644, 1);
+			#else
+    		status = sem_init(&gpReadInfo[i].pStartSemaphore, 0, 0);
+			#endif
 
 			if (status == -1)
 			{
@@ -214,13 +241,21 @@ CdStreamShutdown(void)
     // Destroying semaphores and free(gpReadInfo) will be done at threads
 #ifndef ONE_THREAD_PER_CHANNEL
     gCdStreamThreadStatus = 2;
+	#ifdef __APPLE__
+	sem_post(gCdStreamSema);
+	#else
     sem_post(&gCdStreamSema);
+	#endif
 #endif
 
 #ifdef ONE_THREAD_PER_CHANNEL
     for ( int32 i = 0; i < gNumChannels; i++ ) {
         gpReadInfo[i].nThreadStatus = 2;
-        sem_post(&gpReadInfo[i].pStartSemaphore);
+		#ifdef __APPLE__
+		sem_post(gpReadInfo[i].pStartSemaphore);
+		#else
+		sem_post(&gpReadInfo[i].pStartSemaphore);
+		#endif
     }
 #endif
 }
@@ -254,11 +289,21 @@ CdStreamRead(int32 channel, void *buffer, uint32 offset, uint32 size)
 
 #ifndef ONE_THREAD_PER_CHANNEL
     AddToQueue(&gChannelRequestQ, channel);
+	#ifdef __APPLE__
+	if ( sem_post(gCdStreamSema) != 0 )
+        printf("Signal Sema Error\n");
+	#else
     if ( sem_post(&gCdStreamSema) != 0 )
         printf("Signal Sema Error\n");
+	#endif
 #else
+	#ifdef __APPLE__
+	if ( sem_post(gpReadInfo[channel].pStartSemaphore) != 0 )
+        printf("Signal Sema Error\n");
+	#else
     if ( sem_post(&gpReadInfo[channel].pStartSemaphore) != 0 )
         printf("Signal Sema Error\n");
+	#endif
 #endif
 
     return STREAM_SUCCESS;
@@ -332,7 +377,11 @@ CdStreamSync(int32 channel)
     {
         pChannel->bLocked = true;
 
-        sem_wait(&pChannel->pDoneSemaphore);
+		#ifdef __APPLE__
+		sem_wait(pChannel->pDoneSemaphore);
+		#else
+		sem_wait(&pChannel->pDoneSemaphore);
+		#endif
     }
 
     pChannel->bReading = false;
@@ -383,12 +432,20 @@ void *CdStreamThread(void *param)
 
 #ifndef ONE_THREAD_PER_CHANNEL
     while (gCdStreamThreadStatus != 2) {
+		#ifdef __APPLE__
+		sem_wait(gCdStreamSema);
+		#else
 		sem_wait(&gCdStreamSema);
+		#endif
         int32 channel = GetFirstInQueue(&gChannelRequestQ);
 #else
     int channel = *((int*)param);
     while (gpReadInfo[channel].nThreadStatus != 2){
+		#ifdef __APPLE__
+		sem_wait(gpReadInfo[channel].pStartSemaphore);
+		#else
 		sem_wait(&gpReadInfo[channel].pStartSemaphore);
+		#endif
 #endif
 		ASSERT( channel < gNumChannels );
 
@@ -437,20 +494,37 @@ void *CdStreamThread(void *param)
 
 		if ( pChannel->bLocked )
 		{
-			sem_post(&pChannel->pDoneSemaphore);
+			sem_post(pChannel->pDoneSemaphore);
 		}
 		pChannel->bReading = false;
 	}
 #ifndef ONE_THREAD_PER_CHANNEL
     for ( int32 i = 0; i < gNumChannels; i++ )
     {
-        sem_destroy(&gpReadInfo[i].pDoneSemaphore);
+		#ifdef __APPLE__
+		sem_close(gpReadInfo[i].pDoneSemaphore);
+		sem_unlink("/semaphoredone");
+		#else
+		sem_destroy(&gpReadInfo[i].pDoneSemaphore);
+		#endif
     }
-    sem_destroy(&gCdStreamSema);
+	#ifdef __APPLE__
+	sem_close(gCdStreamSema);
+	sem_unlink("/semaphore");
+	#else
+	sem_destroy(&gCdStreamSema);
+	#endif
 	free(gChannelRequestQ.items);
 #else
-    sem_destroy(&gpReadInfo[channel].pStartSemaphore);
+	#ifdef __APPLE__
+	sem_close(gpReadInfo[i].pStartSemaphore);
+	sem_unlink("/semaphorestart");
+	sem_close(gpReadInfo[i].pDoneSemaphore);
+	sem_unlink("/semaphoredone");
+	#else
+	sem_destroy(&gpReadInfo[channel].pStartSemaphore);
     sem_destroy(&gpReadInfo[channel].pDoneSemaphore);
+	#endif
 #endif
     free(gpReadInfo);
 	pthread_exit(nil);
