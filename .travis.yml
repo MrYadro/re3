@@ -8,6 +8,7 @@ jobs:
 #  - env: TARGET=debug_linux-amd64-librw_gl3_glfw-oal
 #    os: linux
   - env: TARGET=release_macosx-amd64-librw_gl3_glfw-oal PREMAKE5=premake-5.0.0-alpha15
+    compiler: clang
     os: osx
     osx_image: xcode12u
 #  - env: TARGET=debug_macosx-amd64-librw_gl3_glfw-oal
